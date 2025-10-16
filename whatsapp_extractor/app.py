@@ -8,7 +8,6 @@ from datetime import datetime
 st.set_page_config(page_title="WhatsApp Chat Extractor", layout="wide")
 st.title("📱 WhatsApp Chat Extractor with Date Filter")
 
-# Upload ZIP
 uploaded_zip = st.file_uploader("Upload WhatsApp chat ZIP file", type=["zip"])
 
 if uploaded_zip:
@@ -22,37 +21,30 @@ if uploaded_zip:
                 chat_bytes = z.read(chat_file_name)
                 lines = chat_bytes.decode("utf-8", errors="ignore").splitlines()
 
-                # ------------------ robust parser ------------------
-                # Common WhatsApp patterns
-                patterns = [
-                    r"^(\d{1,2}/\d{1,2}/\d{2,4}, \d{1,2}:\d{2}) - (.*?): (.*)$",           # 24h, DD/MM/YYYY
-                    r"^(\d{1,2}/\d{1,2}/\d{2,4}, \d{1,2}:\d{2} (?:AM|PM)) - (.*?): (.*)$", # 12h, DD/MM/YYYY
-                    r"^(\d{1,2}-\d{1,2}-\d{2,4}, \d{1,2}:\d{2}) - (.*?): (.*)$",           # 24h, DD-MM-YYYY
-                    r"^(\d{1,2}-\d{1,2}-\d{2,4}, \d{1,2}:\d{2} (?:AM|PM)) - (.*?): (.*)$"  # 12h, DD-MM-YYYY
-                ]
-                compiled_patterns = [re.compile(p) for p in patterns]
+                # ------------------ regex for your format ------------------
+                # Example: 14/09/25, 9:03 pm - Sender: Message
+                pattern = re.compile(r"^(\d{2}/\d{2}/\d{2}), (\d{1,2}:\d{2})\s*(am|pm)?\s*-\s*(.*?): (.*)$", re.IGNORECASE)
 
                 data = []
                 for line in lines:
-                    matched = False
-                    for pattern in compiled_patterns:
-                        match = pattern.match(line)
-                        if match:
-                            date_time, sender, message = match.groups()
-                            data.append([date_time.strip(), sender.strip(), message.strip()])
-                            matched = True
-                            break
-                    if not matched and data:
-                        # Multiline message continuation
+                    match = pattern.match(line)
+                    if match:
+                        date_part, time_part, ampm, sender, message = match.groups()
+                        # Fix am/pm formatting
+                        ampm = ampm or ""
+                        datetime_str = f"{date_part}, {time_part} {ampm}".strip()
+                        data.append([datetime_str, sender.strip(), message.strip()])
+                    elif data:
+                        # Multiline continuation
                         data[-1][2] += "\n" + line.strip()
 
                 if data:
                     df = pd.DataFrame(data, columns=["DateTime", "Sender", "Message"])
 
-                    # ------------------ parse DateTime column ------------------
+                    # Parse DateTime column
                     def parse_datetime(dt_str):
-                        formats = ["%d/%m/%Y, %H:%M", "%d/%m/%Y, %I:%M %p",
-                                   "%d-%m-%Y, %H:%M", "%d-%m-%Y, %I:%M %p"]
+                        dt_str = dt_str.replace('\u202f', ' ')  # remove non-breaking spaces
+                        formats = ["%d/%m/%y, %I:%M %p", "%d/%m/%y, %H:%M"]
                         for fmt in formats:
                             try:
                                 return datetime.strptime(dt_str, fmt)
@@ -61,7 +53,7 @@ if uploaded_zip:
                         return None
 
                     df["DateTime"] = df["DateTime"].apply(parse_datetime)
-                    df = df.dropna(subset=["DateTime"])  # remove rows with invalid datetime
+                    df = df.dropna(subset=["DateTime"])
 
                     st.success(f"Parsed {len(df)} messages successfully!")
 
