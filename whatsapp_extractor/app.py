@@ -1,4 +1,4 @@
-# ------------------ _signal wrapper (your code) ------------------
+# ------------------ _signal wrapper ------------------
 import _signal
 from _signal import *
 from enum import IntEnum as _IntEnum
@@ -86,61 +86,61 @@ del _globals, _wraps
 # ------------------ STREAMLIT APP ------------------
 import streamlit as st
 import pandas as pd
-import zipfile
 import re
 from io import BytesIO
 
-st.set_page_config(page_title="WhatsApp Extractor", layout="wide")
+st.set_page_config(page_title="WhatsApp Chat Extractor", layout="wide")
 st.title("📱 WhatsApp Chat Extractor")
 
-# Upload ZIP file
-uploaded_zip = st.file_uploader("Upload WhatsApp chat ZIP file", type=["zip"])
+# Upload TXT file
+uploaded_file = st.file_uploader("Upload WhatsApp chat TXT file", type=["txt"])
 
-if uploaded_zip:
+if uploaded_file:
     try:
-        with zipfile.ZipFile(uploaded_zip) as z:
-            st.write("Files in ZIP:", z.namelist())
+        # Read lines
+        lines = uploaded_file.read().decode("utf-8").splitlines()
 
-            txt_files = [f for f in z.namelist() if f.endswith(".txt")]
-            if not txt_files:
-                st.error("No TXT chat file found in ZIP!")
-            else:
-                chat_file_name = txt_files[0]  # take first TXT file
-                chat_bytes = z.read(chat_file_name)
-                lines = chat_bytes.decode("utf-8").splitlines()
+        # Flexible regex parser
+        patterns = [
+            re.compile(r"^(\d{1,2}/\d{1,2}/\d{4}, \d{1,2}:\d{2}) - (.*?): (.*)$"),  # 24h format
+            re.compile(r"^(\d{1,2}/\d{1,2}/\d{4}, \d{1,2}:\d{2} (?:AM|PM)) - (.*?): (.*)$"),  # 12h format
+        ]
 
-                # Regex parser for WhatsApp messages
-                pattern = re.compile(r"^(\d{1,2}/\d{1,2}/\d{2,4}, \d{1,2}:\d{2}(?: AM| PM)?) - (.*?): (.*)$")
-                data = []
+        data = []
+        for line in lines:
+            matched = False
+            for pattern in patterns:
+                match = pattern.match(line)
+                if match:
+                    date_time, sender, message = match.groups()
+                    data.append([date_time, sender, message])
+                    matched = True
+                    break
+            if not matched and data:
+                # Append multiline messages
+                data[-1][2] += "\n" + line
 
-                for line in lines:
-                    match = pattern.match(line)
-                    if match:
-                        date_time, sender, message = match.groups()
-                        data.append([date_time, sender, message])
-                    else:
-                        if data:
-                            data[-1][2] += "\n" + line  # append multiline messages
+        if data:
+            df = pd.DataFrame(data, columns=["DateTime", "Sender", "Message"])
 
-                if data:
-                    df = pd.DataFrame(data, columns=["DateTime", "Sender", "Message"])
-                    st.success(f"Parsed {len(df)} messages successfully!")
-                    st.dataframe(df.head())
+            # Example calculation: Word count
+            df["Word_Count"] = df["Message"].apply(lambda x: len(x.split()))
 
-                    # Add example calculation: number of words
-                    df["Word_Count"] = df["Message"].apply(lambda x: len(x.split()))
+            st.success(f"Parsed {len(df)} messages successfully!")
+            st.dataframe(df.head())
 
-                    # Download Excel
-                    buffer = BytesIO()
-                    df.to_excel(buffer, index=False)
-                    st.download_button(
-                        label="Download Excel",
-                        data=buffer,
-                        file_name="whatsapp_parsed.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                else:
-                    st.error("No messages could be parsed. Check TXT format.")
+            # Download Excel
+            buffer = BytesIO()
+            df.to_excel(buffer, index=False)
+            st.download_button(
+                label="Download Excel",
+                data=buffer,
+                file_name="whatsapp_parsed.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+        else:
+            st.error("No messages could be parsed. Check TXT format.")
 
     except Exception as e:
-        st.error(f"Error reading ZIP file: {e}")
+        st.error(f"Error reading TXT file: {e}")
