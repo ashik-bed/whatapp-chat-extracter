@@ -8,48 +8,52 @@ from datetime import datetime
 st.set_page_config(page_title="WhatsApp Chat Extractor", layout="wide")
 st.title("📱 WhatsApp Chat Extractor with Date Filter")
 
-# Upload WhatsApp ZIP
+# Upload ZIP
 uploaded_zip = st.file_uploader("Upload WhatsApp chat ZIP file", type=["zip"])
 
 if uploaded_zip:
     try:
         with zipfile.ZipFile(uploaded_zip) as z:
-            # List files inside ZIP
             txt_files = [f for f in z.namelist() if f.endswith(".txt")]
             if not txt_files:
                 st.error("No TXT file found in ZIP!")
             else:
                 chat_file_name = txt_files[0]
                 chat_bytes = z.read(chat_file_name)
-                lines = chat_bytes.decode("utf-8").splitlines()
+                lines = chat_bytes.decode("utf-8", errors="ignore").splitlines()
 
-                # Flexible regex parser
+                # ------------------ robust parser ------------------
+                # Common WhatsApp patterns
                 patterns = [
-                    re.compile(r"^(\d{1,2}/\d{1,2}/\d{4}, \d{1,2}:\d{2}) - (.*?): (.*)$"),
-                    re.compile(r"^(\d{1,2}/\d{1,2}/\d{4}, \d{1,2}:\d{2} (?:AM|PM)) - (.*?): (.*)$"),
-                    re.compile(r"^(\d{1,2}-\d{1,2}-\d{4}, \d{1,2}:\d{2}) - (.*?): (.*)$"),
-                    re.compile(r"^(\d{1,2}-\d{1,2}-\d{4}, \d{1,2}:\d{2} (?:AM|PM)) - (.*?): (.*)$"),
+                    r"^(\d{1,2}/\d{1,2}/\d{2,4}, \d{1,2}:\d{2}) - (.*?): (.*)$",           # 24h, DD/MM/YYYY
+                    r"^(\d{1,2}/\d{1,2}/\d{2,4}, \d{1,2}:\d{2} (?:AM|PM)) - (.*?): (.*)$", # 12h, DD/MM/YYYY
+                    r"^(\d{1,2}-\d{1,2}-\d{2,4}, \d{1,2}:\d{2}) - (.*?): (.*)$",           # 24h, DD-MM-YYYY
+                    r"^(\d{1,2}-\d{1,2}-\d{2,4}, \d{1,2}:\d{2} (?:AM|PM)) - (.*?): (.*)$"  # 12h, DD-MM-YYYY
                 ]
+                compiled_patterns = [re.compile(p) for p in patterns]
 
                 data = []
                 for line in lines:
                     matched = False
-                    for pattern in patterns:
+                    for pattern in compiled_patterns:
                         match = pattern.match(line)
                         if match:
                             date_time, sender, message = match.groups()
-                            data.append([date_time, sender, message])
+                            data.append([date_time.strip(), sender.strip(), message.strip()])
                             matched = True
                             break
                     if not matched and data:
-                        data[-1][2] += "\n" + line  # append multiline messages
+                        # Multiline message continuation
+                        data[-1][2] += "\n" + line.strip()
 
                 if data:
                     df = pd.DataFrame(data, columns=["DateTime", "Sender", "Message"])
 
-                    # Convert DateTime column to datetime type
+                    # ------------------ parse DateTime column ------------------
                     def parse_datetime(dt_str):
-                        for fmt in ("%d/%m/%Y, %H:%M", "%d/%m/%Y, %I:%M %p", "%d-%m-%Y, %H:%M", "%d-%m-%Y, %I:%M %p"):
+                        formats = ["%d/%m/%Y, %H:%M", "%d/%m/%Y, %I:%M %p",
+                                   "%d-%m-%Y, %H:%M", "%d-%m-%Y, %I:%M %p"]
+                        for fmt in formats:
                             try:
                                 return datetime.strptime(dt_str, fmt)
                             except:
@@ -57,11 +61,11 @@ if uploaded_zip:
                         return None
 
                     df["DateTime"] = df["DateTime"].apply(parse_datetime)
-                    df = df.dropna(subset=["DateTime"])  # drop rows where datetime couldn't be parsed
+                    df = df.dropna(subset=["DateTime"])  # remove rows with invalid datetime
 
                     st.success(f"Parsed {len(df)} messages successfully!")
 
-                    # ---------------- Filter by date ----------------
+                    # ------------------ Date filter ------------------
                     st.sidebar.subheader("Filter by Date")
                     min_date = df["DateTime"].min().date()
                     max_date = df["DateTime"].max().date()
@@ -71,7 +75,7 @@ if uploaded_zip:
                     filtered_df = df[(df["DateTime"].dt.date >= from_date) & (df["DateTime"].dt.date <= to_date)]
                     st.dataframe(filtered_df)
 
-                    # ---------------- Download filtered Excel ----------------
+                    # ------------------ Download filtered Excel ------------------
                     buffer = BytesIO()
                     filtered_df.to_excel(buffer, index=False)
                     st.download_button(
@@ -80,7 +84,6 @@ if uploaded_zip:
                         file_name="whatsapp_filtered.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
-
                 else:
                     st.error("No messages could be parsed. Check TXT format.")
 
